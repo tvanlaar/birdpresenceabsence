@@ -1,0 +1,98 @@
+---
+title: "Pine Siskin Project Fresno"
+author: "Tricia"
+date: '`r Sys.Date()`'
+output: pdf_document
+---
+
+```{r}
+library(auk)
+library(readr)
+library(tidyverse)
+```
+
+```{r}
+auk_set_ebd_path("~/Desktop/SiskinPresenceAbsence", overwrite=TRUE)
+```
+
+```{r}
+ebd<-read_tsv("data/ebdonly.txt")
+smp<-read_tsv("data/sampling.txt")
+```
+
+```{r}
+##set file names for filtered files
+f_ebd<-"data/ebd_pinsis.txt"
+f_sed<-"data/sed_pinsis.txt"
+
+##filter ebd and sampling files by complete checklist only to july 2013
+ebd_pinsis <- auk_ebd("ebdonly.txt", file_sampling = "sampling.txt") %>% auk_date(date = c("2013-06-30", "2023-07-01")) %>% auk_complete() %>% auk_filter(f_ebd, file_sampling = f_sed, overwrite=TRUE)
+```
+
+```{r}
+##read new files into R
+ebd_only <- read_ebd(f_ebd)
+sed_only <- read_sampling(f_sed)
+nrow(ebd_only) ##number of checklists with siskins (1282)
+nrow(sed_only) ##number of checklists (29939)
+```
+
+```{r}
+##combine files for presence absence data
+ebd_zf <- auk_zerofill(f_ebd, sampling_events = f_sed)
+
+##collapse into 1 data frame
+ebd_zf_df <- collapse_zerofill(ebd_zf)
+```
+
+```{r}
+##Change observations of X to NA and stationary to 0 km distance
+zf_count <- ebd_zf_df %>% 
+  mutate(observation_count = if_else(observation_count == "X", 
+                                     NA_character_, observation_count),
+         observation_count = as.integer(observation_count),
+         effort_distance_km = if_else(protocol_type == "Stationary", 
+                                      0, effort_distance_km))
+```
+
+```{r}
+##keep checklists less than 5 hours, less than 5 km, and fewer than 10 observers
+zf_effort <- zf_count %>% 
+  filter(duration_minutes <= 60 * 5,
+         effort_distance_km <= 5,
+         number_observers <= 10)
+```
+
+```{r}
+##write to file
+write_csv(zf_effort, "data/ebird_pinsis_zf.csv")
+```
+
+```{r}
+sis_freq <- zf_effort %>%
+  mutate(year = year(observation_date)) %>%
+  group_by(year) %>%
+  summarize(obs_freq = mean(species_observed)) %>%
+  ungroup()
+```
+
+```{r}
+sis_comm <- sis_freq %>%
+  select(year, obs_freq) %>%
+  mutate(year_midpoint = ymd(str_glue("{year}-07-01")))
+```
+
+```{r}
+graph=ggplot(sis_comm) +
+  aes(x = year_midpoint, y = obs_freq) +
+  geom_point() +
+  geom_line() +
+  scale_x_date(date_breaks = "1 years",
+               date_labels = "%Y") +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = "Year", y = "Observation Frequency",
+       color = NULL) +
+  theme(legend.position = "bottom")
+
+graph
+```

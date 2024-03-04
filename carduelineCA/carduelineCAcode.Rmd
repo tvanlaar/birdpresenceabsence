@@ -1,0 +1,125 @@
+---
+title: "Cardueline Finches in CA"
+author: "Tricia"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r}
+library(auk)
+library(readr)
+library(tidyverse)
+```
+
+```{r}
+auk_set_ebd_path("~/Desktop/BirdPresenceAbsence/carduelineCA", overwrite=TRUE)
+```
+
+```{r}
+ebd<-read_tsv("ebd.txt")
+smp<-read_tsv("sampling.txt")
+```
+
+```{r}
+f_ebd <- "ebd_cardueline.txt"
+f_sed <- "sed_cardueline.txt"
+
+# extract
+filters <- auk_ebd("ebd.txt", 
+                   file_sampling = "sampling.txt") %>% 
+  auk_species(c("Pine Siskin", "Lesser Goldfinch", 
+                "American Goldfinch", "House Finch")) %>% 
+  auk_date(c("1970-01-01", "2024-01-01")) %>% 
+  auk_complete() %>% 
+  auk_filter(f_ebd, f_sed, overwrite = TRUE)
+```
+
+# zero-fill
+```{r}
+cardueline_zf <- auk_zerofill(f_ebd, f_sed, collapse = TRUE)
+count(cardueline_zf, scientific_name, species_observed)
+```
+
+##replace X  observation with NA and distance for stationary to 0km
+```{r}
+zf_count <- cardueline_zf %>% 
+  mutate(observation_count = if_else(observation_count == "X", 
+                                     NA_character_, observation_count),
+         observation_count = as.integer(observation_count),
+         effort_distance_km = if_else(protocol_type == "Stationary", 
+                                      0, effort_distance_km))
+```
+
+#standardize observations some
+```{r}
+zf_effort <- zf_count %>% 
+  filter(duration_minutes <= 60 * 5,
+         effort_distance_km <= 5,
+         number_observers <= 10)
+```
+
+##remove unnecessary columns
+```{r}
+cardebird <- zf_effort %>% 
+  select(checklist_id, observer_id, sampling_event_identifier,
+         scientific_name,
+         observation_count, species_observed, 
+         state_code, locality_id, latitude, longitude,
+         protocol_type, all_species_reported,
+         observation_date,
+         time_observations_started, 
+         duration_minutes, effort_distance_km,
+         number_observers)
+```
+
+##save as file
+```{r}
+write_csv(cardebird, "carduelineeffort.csv")
+```
+
+```{r}
+card_freq <- cardebird %>%
+  mutate(year = year(observation_date)) %>%
+  group_by(scientific_name, year) %>%
+  summarize(obs_freq = mean(species_observed)) %>%
+  ungroup()
+```
+
+```{r}
+card_comm <- card_freq %>%
+  inner_join(ebird_taxonomy, by = "scientific_name") %>% 
+  select(common_name, year, obs_freq) %>%
+  mutate(year_midpoint = ymd(str_glue("{year}-07-01")))
+```
+
+```{r}
+save(card_comm, file = "card_comm_1970_2024.RData")
+```
+
+```{r}
+graph=ggplot(card_comm) +
+  aes(x = year_midpoint, y = obs_freq, color = common_name) +
+  geom_point() +
+  geom_line() +
+  scale_x_date(date_breaks = "3 years",
+               date_labels = "%Y") +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = "Year", y = "Observation Frequency",
+       color = NULL) +
+  theme(legend.position = "bottom")
+
+graph
+```
+
+##export tiff with 300dpi
+```{r}
+ggsave(
+  filename="CardCA19702024.tiff",
+  plot = graph,
+  width = 250,
+  height = 200,
+  units = c("mm"),
+  dpi = 300,
+  bg = "white"
+)
+```
